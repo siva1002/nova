@@ -1,0 +1,84 @@
+# CI. Every PR runs this. main is protected: merge only when green.
+# Path filtering: a change under services/<x>/ runs only that service's tests (plus the shared checks).
+# A change under libs/common or contracts runs every service's tests.
+name: ci
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      all: ${{ steps.f.outputs.shared }}
+      identity: ${{ steps.f.outputs.identity }}
+      access: ${{ steps.f.outputs.access }}
+      hierarchy: ${{ steps.f.outputs.hierarchy }}
+      tasks: ${{ steps.f.outputs.tasks }}
+      time: ${{ steps.f.outputs.time }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: f
+        with:
+          filters: |
+            shared:
+              - 'libs/**'
+              - 'contracts/**'
+              - 'pyproject.toml'
+              - 'uv.lock'
+              - 'tools/db-split/**'
+            identity: ['services/identity/**']
+            access: ['services/access/**']
+            hierarchy: ['services/hierarchy/**']
+            tasks: ['services/tasks/**']
+            time: ['services/time/**']
+
+  # Fast checks that always run: style, types, import rules, contracts.
+  static:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - run: uv sync --frozen --all-packages
+      - run: make lint
+      - run: make types
+      - run: make imports
+      - run: make contracts
+
+  # One job per service, skipped when neither the service nor shared code changed.
+  test:
+    needs: changes
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [identity, access, hierarchy, tasks, time]
+    # A real PostgreSQL 16 for the integration tests (locally the bundled pgserver package does this).
+    services:
+      postgres:
+        image: postgres:16
+        env: { POSTGRES_PASSWORD: ci-only }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-retries 10
+    env:
+      PG_TEST_URL: postgresql://postgres:ci-only@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - name: Decide whether this service needs testing
+        id: gate
+        run: |
+          if [ "${{ needs.changes.outputs.all }}" = "true" ] || [ "${{ needs.changes.outputs[matrix.service] }}" = "true" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.gate.outputs.run == 'true'
+        run: uv sync --frozen --all-packages
+      - if: steps.gate.outputs.run == 'true'
+        run: uv run pytest services/${{ matrix.service }} tests   # unit + integration + cross-service and contract tests

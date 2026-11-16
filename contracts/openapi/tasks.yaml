@@ -1,0 +1,459 @@
+openapi: 3.1.0
+info:
+  title: tasks (per cell)
+  version: 1.0.0
+  description: >
+    Tasks, subtasks, assignees, tags, dependencies, links, checklists, custom fields and values, formulas,
+    task templates, and the task query engine that views and exports use.
+servers:
+  - url: https://api.example.invalid
+security:
+  - bearer: []
+paths:
+  /v1/w/{workspace_id}/tasks:
+    parameters: [ { $ref: 'common.yaml#/components/parameters/Workspace' } ]
+    post:
+      operationId: createTask
+      summary: Create a task or subtask (client-made id). Fills defaults, applies required checks, runs formulas
+      x-permission: create on the home list (own-only roles can create)
+      parameters: [ { $ref: 'common.yaml#/components/parameters/IdempotencyKey' } ]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/TaskCreate' } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Task' } } } }
+        '403': { $ref: 'common.yaml#/components/responses/Problem' }
+        '422': { $ref: 'common.yaml#/components/responses/Problem' }
+  /v1/w/{workspace_id}/tasks/{task_id}:
+    parameters:
+      - $ref: 'common.yaml#/components/parameters/Workspace'
+      - { name: task_id, in: path, required: true, schema: { $ref: 'common.yaml#/components/schemas/Id' } }
+    get:
+      operationId: getTask
+      x-permission: view (fields filtered by R8 and R9)
+      parameters:
+        - { name: include, in: query, schema: { type: array, items: { type: string, enum: [subtasks, dependencies, checklists, links, history] } }, style: form, explode: false }
+      responses:
+        '200': { description: Task, content: { application/json: { schema: { $ref: '#/components/schemas/Task' } } } }
+        '404': { $ref: 'common.yaml#/components/responses/Problem' }
+    patch:
+      operationId: updateTask
+      summary: Change any task attributes and custom field values in one transaction. Status change checks required fields
+      x-permission: edit (own-only allowed if creator or assignee)
+      parameters: [ { $ref: 'common.yaml#/components/parameters/IdempotencyKey' } ]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/TaskPatch' } } }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Task' } } } }
+        '409': { $ref: 'common.yaml#/components/responses/Conflict' }
+        '422': { $ref: 'common.yaml#/components/responses/Problem' }
+    delete:
+      operationId: deleteTask
+      summary: Soft delete with subtasks, restorable for 30 days
+      x-permission: delete
+      parameters:
+        - { name: version, in: query, required: true, schema: { type: integer } }
+      responses:
+        '204': { $ref: 'common.yaml#/components/responses/NoContent' }
+  /v1/w/{workspace_id}/tasks/{task_id}/move:
+    parameters:
+      - $ref: 'common.yaml#/components/parameters/Workspace'
+      - { name: task_id, in: path, required: true, schema: { $ref: 'common.yaml#/components/schemas/Id' } }
+    post:
+      operationId: moveTask
+      summary: Change home list or parent. Status mapped by name, then by category, unless statusId given
+      x-permission: delete on the source list, create on the target list
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [version]
+              properties:
+                version: { type: integer }
+                homeListId: { type: string, format: uuid }
+                parentTaskId: { type: [string, 'null'], format: uuid }
+                statusId: { type: string, format: uuid }
+                position: { type: string }
+      responses:
+        '200': { description: Moved, content: { application/json: { schema: { $ref: '#/components/schemas/Task' } } } }
+        '422': { $ref: 'common.yaml#/components/responses/Problem' }
+  /v1/w/{workspace_id}/tasks/{task_id}/position:
+    parameters:
+      - $ref: 'common.yaml#/components/parameters/Workspace'
+      - { name: task_id, in: path, required: true, schema: { $ref: 'common.yaml#/components/schemas/Id' } }
+    put:
+      operationId: setPosition
+      summary: Order in a list or board column (one row write; fractional index)
+      x-permission: edit
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [listId, afterTaskId]
+              properties:
+                listId: { type: string, format: uuid }
+                afterTaskId: { type: [string, 'null'], format: uuid }
+                beforeTaskId: { type: [string, 'null'], format: uuid }
+      responses:
+        '204': { $ref: 'common.yaml#/components/responses/NoContent' }
+  /v1/w/{workspace_id}/tasks/bulk:
+    parameters: [ { $ref: 'common.yaml#/components/parameters/Workspace' } ]
+    post:
+      operationId: bulkUpdate
+      summary: Same change on up to 500 tasks; more than 500 runs as a background job and returns 202
+      x-permission: edit on each task (checked per task)
+      parameters: [ { $ref: 'common.yaml#/components/parameters/IdempotencyKey' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [taskIds, change]
+              properties:
+                taskIds: { type: array, items: { type: string, format: uuid }, maxItems: 500 }
+                change: { $ref: '#/components/schemas/TaskPatchBody' }
+      responses:
+        '207': { description: Result per task, content: { application/json: { schema: { $ref: 'common.yaml#/components/schemas/BulkResult' } } } }
+  /v1/w/{workspace_id}/tasks/query:
+    parameters: [ { $ref: 'common.yaml#/components/parameters/Workspace' } ]
+    post:
+      operationId: queryTasks
+      summary: >
+        The task query engine. Used by views (list, board, table), exports and the web app. Permission filter is
+        added before paging (permissions spec section 4). Runs on a read replica.
+      x-permission: view (filtered)
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/TaskQuery' } } }
+      responses:
+        '200': { description: Result, content: { application/json: { schema: { $ref: '#/components/schemas/TaskQueryResult' } } } }
+        '422': { $ref: 'common.yaml#/components/responses/Problem' }
+  /v1/w/{workspace_id}/tasks/{task_id}/dependencies:
+    parameters:
+      - $ref: 'common.yaml#/components/parameters/Workspace'
+      - { name: task_id, in: path, required: true, schema: { $ref: 'common.yaml#/components/schemas/Id' } }
+    post:
+      operationId: addDependency
+      summary: This task waits on dependsOnTaskId. Cycles are rejected
+      x-permission: edit on both tasks
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [dependsOnTaskId], properties: { dependsOnTaskId: { type: string, format: uuid } } } } }
+      responses:
+        '201': { description: Added }
+        '422': { $ref: 'common.yaml#/components/responses/Problem' }
+  /v1/w/{workspace_id}/tasks/{task_id}/checklists:
+    parameters:
+      - $ref: 'common.yaml#/components/parameters/Workspace'
+      - { name: task_id, in: path, required: true, schema: { $ref: 'common.yaml#/components/schemas/Id' } }
+    post:
+      operationId: addChecklist
+      x-permission: edit
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [id, name], properties: { id: { type: string, format: uuid }, name: { type: string }, items: { type: array, items: { type: object, properties: { id: { type: string, format: uuid }, name: { type: string }, done: { type: boolean } } } } } } } }
+      responses:
+        '201': { description: Added }
+  /v1/w/{workspace_id}/tasks/{task_id}/history:
+    parameters:
+      - $ref: 'common.yaml#/components/parameters/Workspace'
+      - { name: task_id, in: path, required: true, schema: { $ref: 'common.yaml#/components/schemas/Id' } }
+      - $ref: 'common.yaml#/components/parameters/Cursor'
+    get:
+      operationId: taskHistory
+      summary: Served by the audit service (activity history), routed here by path
+      x-permission: view_activity
+      responses:
+        '200': { description: Page of changes, content: { application/json: { schema: { $ref: 'common.yaml#/components/schemas/Page' } } } }
+  /v1/w/{workspace_id}/fields:
+    parameters: [ { $ref: 'common.yaml#/components/parameters/Workspace' } ]
+    get:
+      operationId: listFields
+      summary: Field definitions available at a node (own and inherited locations)
+      x-permission: view on the node
+      parameters:
+        - { name: node, in: query, required: true, schema: { $ref: 'common.yaml#/components/schemas/Id' } }
+      responses:
+        '200': { description: Fields, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Field' } } } } }
+    post:
+      operationId: createField
+      x-permission: manage_fields on each location node
+      parameters: [ { $ref: 'common.yaml#/components/parameters/IdempotencyKey' } ]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/FieldInput' } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Field' } } } }
+        '422': { $ref: 'common.yaml#/components/responses/Problem' }
+  /v1/w/{workspace_id}/fields/{field_id}:
+    parameters:
+      - $ref: 'common.yaml#/components/parameters/Workspace'
+      - { name: field_id, in: path, required: true, schema: { $ref: 'common.yaml#/components/schemas/Id' } }
+    patch:
+      operationId: updateField
+      summary: Rename, change options, locations, access or formula. A formula change starts a recalculation job
+      x-permission: manage_fields
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: 'common.yaml#/components/schemas/VersionOnly'
+                - $ref: '#/components/schemas/FieldInput'
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Field' } } } }
+        '409': { $ref: 'common.yaml#/components/responses/Conflict' }
+        '422': { $ref: 'common.yaml#/components/responses/Problem' }
+    delete:
+      operationId: deleteField
+      x-permission: manage_fields
+      parameters:
+        - { name: version, in: query, required: true, schema: { type: integer } }
+      responses:
+        '204': { $ref: 'common.yaml#/components/responses/NoContent' }
+        '409': { description: Other formulas use this field; body lists them }
+  /v1/w/{workspace_id}/fields/formula/preview:
+    parameters: [ { $ref: 'common.yaml#/components/parameters/Workspace' } ]
+    post:
+      operationId: previewFormula
+      summary: Parse, type-check, cycle-check, and evaluate on up to 5 tasks (plan/tech/05-formula-spec.md)
+      x-permission: manage_fields
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expression, nodeId]
+              properties:
+                expression: { type: string, maxLength: 4000 }
+                nodeId: { type: string, format: uuid }
+                fieldId: { type: string, format: uuid, description: when editing an existing field (for the cycle check) }
+                sampleTaskIds: { type: array, items: { type: string, format: uuid }, maxItems: 5 }
+      responses:
+        '200':
+          description: Result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  resultType: { type: string, enum: [number, money, duration, date, text, boolean] }
+                  errors: { type: array, items: { type: object, properties: { message: { type: string }, start: { type: integer }, end: { type: integer } } } }
+                  samples: { type: array, items: { type: object, properties: { taskId: { type: string, format: uuid }, value: {} } } }
+  /v1/w/{workspace_id}/templates:
+    parameters: [ { $ref: 'common.yaml#/components/parameters/Workspace' } ]
+    get:
+      operationId: listTemplates
+      x-permission: member
+      parameters:
+        - { name: kind, in: query, schema: { type: string, enum: [task] } }
+      responses:
+        '200': { description: Templates, content: { application/json: { schema: { type: array, items: { type: object } } } } }
+    post:
+      operationId: saveTemplate
+      summary: Save a task with its subtasks, checklists and field values as a template
+      x-permission: manage_forms_templates
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [id, name, sourceTaskId], properties: { id: { type: string, format: uuid }, name: { type: string }, sourceTaskId: { type: string, format: uuid }, include: { type: object, additionalProperties: { type: boolean } } } } } }
+      responses:
+        '201': { description: Saved }
+  /v1/w/{workspace_id}/templates/{template_id}/apply:
+    parameters:
+      - $ref: 'common.yaml#/components/parameters/Workspace'
+      - { name: template_id, in: path, required: true, schema: { $ref: 'common.yaml#/components/schemas/Id' } }
+    post:
+      operationId: applyTemplate
+      summary: Create a task tree from a template (e.g. a module with SB, Alpha, Beta, Gold stages). Over 200 tasks runs in background
+      x-permission: create on the target list
+      parameters: [ { $ref: 'common.yaml#/components/parameters/IdempotencyKey' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [listId, newRootTaskId]
+              properties:
+                listId: { type: string, format: uuid }
+                newRootTaskId: { type: string, format: uuid }
+                name: { type: string }
+                startAt: { type: string, format: date-time, description: dates shift relative to this }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Task' } } } }
+        '202': { description: 'Accepted; running in the background' }
+  /internal/v1/w/{workspace_id}/snapshot/{aggregate}:
+    parameters:
+      - $ref: 'common.yaml#/components/parameters/Workspace'
+      - { name: aggregate, in: path, required: true, schema: { type: string, enum: [task, field, field_value] } }
+      - $ref: 'common.yaml#/components/parameters/Cursor'
+    get:
+      operationId: snapshot
+      summary: Internal. Rebuild copies and the search index
+      responses:
+        '200': { description: Page, content: { application/json: { schema: { $ref: 'common.yaml#/components/schemas/Page' } } } }
+components:
+  securitySchemes:
+    bearer: { type: http, scheme: bearer, bearerFormat: JWT }
+  schemas:
+    FieldValue:
+      description: Value by field type. Absent = unchanged; null = clear
+      oneOf:
+        - { type: 'null' }
+        - { type: string }
+        - { type: number }
+        - { type: boolean }
+        - { $ref: 'common.yaml#/components/schemas/Money' }
+        - { $ref: 'common.yaml#/components/schemas/SetChange' }
+        - { type: array, items: { type: string } }
+    TaskPatchBody:
+      type: object
+      properties:
+        title: { type: string, maxLength: 1000 }
+        description: { type: string, maxLength: 200000 }
+        statusId: { type: string, format: uuid }
+        taskTypeId: { type: [string, 'null'], format: uuid }
+        priority: { type: [integer, 'null'], minimum: 1, maximum: 4 }
+        startAt: { type: [string, 'null'], format: date-time }
+        dueAt: { type: [string, 'null'], format: date-time }
+        timeEstimateMs: { type: [integer, 'null'], minimum: 0 }
+        points: { type: [number, 'null'] }
+        assignees: { $ref: 'common.yaml#/components/schemas/SetChange' }
+        watchers: { $ref: 'common.yaml#/components/schemas/SetChange' }
+        tags: { $ref: 'common.yaml#/components/schemas/SetChange' }
+        lists: { $ref: 'common.yaml#/components/schemas/SetChange' }
+        customFields:
+          type: object
+          description: field id -> value
+          additionalProperties: { $ref: '#/components/schemas/FieldValue' }
+    TaskCreate:
+      allOf:
+        - type: object
+          required: [id, title, homeListId]
+          properties:
+            id: { type: string, format: uuid }
+            homeListId: { type: string, format: uuid }
+            parentTaskId: { type: string, format: uuid }
+            position: { type: string }
+        - $ref: '#/components/schemas/TaskPatchBody'
+    TaskPatch:
+      allOf:
+        - $ref: 'common.yaml#/components/schemas/VersionOnly'
+        - $ref: '#/components/schemas/TaskPatchBody'
+    Task:
+      allOf:
+        - $ref: 'common.yaml#/components/schemas/Meta'
+        - type: object
+          properties:
+            number: { type: integer }
+            title: { type: string }
+            description: { type: string }
+            homeListId: { type: string, format: uuid }
+            listIds: { type: array, items: { type: string, format: uuid } }
+            parentTaskId: { type: [string, 'null'], format: uuid }
+            status: { type: object, properties: { id: { type: string, format: uuid }, name: { type: string }, category: { type: string } } }
+            taskTypeId: { type: [string, 'null'], format: uuid }
+            priority: { type: [integer, 'null'] }
+            startAt: { type: [string, 'null'], format: date-time }
+            dueAt: { type: [string, 'null'], format: date-time }
+            doneAt: { type: [string, 'null'], format: date-time }
+            timeEstimateMs: { type: [integer, 'null'] }
+            timeTrackedMs: { type: integer }
+            timeTrackedRolledUpMs: { type: integer }
+            points: { type: [number, 'null'] }
+            assigneeIds: { type: array, items: { type: string, format: uuid } }
+            watcherIds: { type: array, items: { type: string, format: uuid } }
+            tagIds: { type: array, items: { type: string, format: uuid } }
+            subtaskCount: { type: integer }
+            createdBy: { type: string, format: uuid }
+            customFields:
+              type: object
+              additionalProperties:
+                type: object
+                properties:
+                  value: {}
+                  stale: { type: boolean, description: formula result being recalculated }
+                  error: { type: [string, 'null'], description: e.g. '#DIV/0' }
+    FilterNode:
+      type: object
+      description: AND/OR tree of conditions
+      properties:
+        op: { type: string, enum: [and, or] }
+        children: { type: array, items: { $ref: '#/components/schemas/FilterNode' } }
+        field: { type: string, description: built-in name or custom field id }
+        operator: { type: string, enum: [eq, neq, in, nin, gt, gte, lt, lte, between, contains, is_set, is_not_set, any_of, all_of] }
+        value: {}
+    TaskQuery:
+      type: object
+      required: [scope]
+      properties:
+        scope:
+          type: object
+          description: where to look
+          properties:
+            nodeIds: { type: array, items: { type: string, format: uuid } }
+            includeSubtasks: { type: string, enum: [none, nested, flat], default: nested }
+            includeArchived: { type: boolean, default: false }
+        filter: { $ref: '#/components/schemas/FilterNode' }
+        search: { type: string }
+        groupBy: { type: array, maxItems: 3, items: { type: string } }
+        sort: { type: array, maxItems: 5, items: { type: object, properties: { field: { type: string }, dir: { type: string, enum: [asc, desc] } } } }
+        columns: { type: array, items: { type: string }, description: fields to return; fewer is faster }
+        totals: { type: array, items: { type: object, properties: { field: { type: string }, fn: { type: string, enum: [sum, avg, min, max, count] } } } }
+        limit: { type: integer, maximum: 200, default: 50 }
+        cursor: { type: string }
+    TaskQueryResult:
+      type: object
+      properties:
+        groups:
+          type: array
+          items:
+            type: object
+            properties:
+              key: { type: array, items: {} }
+              label: { type: array, items: { type: string } }
+              count: { type: integer }
+              totals: { type: object, additionalProperties: {} }
+              items: { type: array, items: { $ref: '#/components/schemas/Task' } }
+              nextCursor: { type: [string, 'null'] }
+        totals: { type: object, additionalProperties: {} }
+        asOf: { type: string, format: date-time, description: replica time; at most 2 s old }
+    FieldInput:
+      type: object
+      required: [name, type]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string, maxLength: 120 }
+        description: { type: string }
+        type: { type: string, enum: [short_text, long_text, number, money, dropdown, labels, checkbox, date, people, relationship, rating, website, email, phone, progress_manual, progress_auto, location, files, formula, rollup] }
+        config: { type: object, description: per type, e.g. currency, precision, options }
+        locations: { type: array, items: { type: string, format: uuid }, description: nodes where the field is available }
+        required: { type: boolean }
+        requiredOnSubtasks: { type: boolean }
+        hideFromGuests: { type: boolean }
+        costField: { type: boolean, description: money shown only with view_costs (Q7) }
+        formula: { type: string, maxLength: 4000 }
+        rollup:
+          type: object
+          properties:
+            source: { type: string, enum: [subtasks, relationship] }
+            relationFieldId: { type: string, format: uuid }
+            target: { type: string, description: field id or built-in }
+            fn: { type: string, enum: [sum, average, min, max, count, earliest, latest, percent_done] }
+    Field:
+      allOf:
+        - $ref: 'common.yaml#/components/schemas/Meta'
+        - $ref: '#/components/schemas/FieldInput'
+        - type: object
+          properties:
+            resultType: { type: string }
+            usedBy: { type: array, items: { type: string, format: uuid }, description: formulas reading this field }

@@ -1,0 +1,293 @@
+openapi: 3.1.0
+info:
+  title: hierarchy (per cell)
+  version: 1.0.0
+  description: Spaces, folders, lists (the tree), status sets and statuses, task types, required fields per status.
+servers:
+  - url: https://api.example.invalid
+security:
+  - bearer: []
+paths:
+  /v1/w/{workspace_id}/tree:
+    parameters: [ { $ref: 'common.yaml#/components/parameters/Workspace' } ]
+    get:
+      operationId: getTree
+      summary: The sidebar. Only nodes the caller can view. With sinceVersion, only changes (and removed ids)
+      x-permission: view (filtered)
+      parameters:
+        - { name: sinceVersion, in: query, schema: { type: integer } }
+        - { name: includeArchived, in: query, schema: { type: boolean, default: false } }
+      responses:
+        '200':
+          description: Tree
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  treeVersion: { type: integer }
+                  nodes: { type: array, items: { $ref: '#/components/schemas/Node' } }
+                  removedIds: { type: array, items: { type: string, format: uuid } }
+  /v1/w/{workspace_id}/spaces:
+    parameters: [ { $ref: 'common.yaml#/components/parameters/Workspace' } ]
+    post:
+      operationId: createSpace
+      x-permission: create_space
+      parameters: [ { $ref: 'common.yaml#/components/parameters/IdempotencyKey' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/NodeInput'
+                - type: object
+                  properties:
+                    statusTemplateId: { type: string, format: uuid }
+                    restricted: { type: boolean, default: false }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Node' } } } }
+        '403': { $ref: 'common.yaml#/components/responses/Problem' }
+  /v1/w/{workspace_id}/folders:
+    parameters: [ { $ref: 'common.yaml#/components/parameters/Workspace' } ]
+    post:
+      operationId: createFolder
+      x-permission: create_container on the parent
+      parameters: [ { $ref: 'common.yaml#/components/parameters/IdempotencyKey' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/NodeInput'
+                - type: object
+                  required: [parentId]
+                  properties:
+                    parentId: { type: string, format: uuid, description: space or folder (nesting limit per workspace) }
+                    isSprintFolder: { type: boolean, default: false }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Node' } } } }
+  /v1/w/{workspace_id}/lists:
+    parameters: [ { $ref: 'common.yaml#/components/parameters/Workspace' } ]
+    post:
+      operationId: createList
+      x-permission: create_container on the parent
+      parameters: [ { $ref: 'common.yaml#/components/parameters/IdempotencyKey' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/NodeInput'
+                - type: object
+                  required: [parentId]
+                  properties:
+                    parentId: { type: string, format: uuid }
+                    defaultTaskTypeId: { type: string, format: uuid }
+                    startAt: { type: string, format: date-time }
+                    dueAt: { type: string, format: date-time }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Node' } } } }
+  /v1/w/{workspace_id}/nodes/{node_id}:
+    parameters:
+      - $ref: 'common.yaml#/components/parameters/Workspace'
+      - { name: node_id, in: path, required: true, schema: { $ref: 'common.yaml#/components/schemas/Id' } }
+    get:
+      operationId: getNode
+      x-permission: view
+      responses:
+        '200': { description: Node, content: { application/json: { schema: { $ref: '#/components/schemas/Node' } } } }
+        '404': { $ref: 'common.yaml#/components/responses/Problem' }
+    patch:
+      operationId: updateNode
+      x-permission: edit on the node
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: 'common.yaml#/components/schemas/VersionOnly'
+                - type: object
+                  properties:
+                    name: { type: string, maxLength: 200 }
+                    description: { type: string }
+                    color: { type: string }
+                    position: { type: string, description: fractional index between neighbours }
+                    archived: { type: boolean }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Node' } } } }
+        '409': { $ref: 'common.yaml#/components/responses/Conflict' }
+    delete:
+      operationId: deleteNode
+      summary: Soft delete with everything below (restorable for 30 days)
+      x-permission: delete on the node
+      parameters:
+        - { name: version, in: query, required: true, schema: { type: integer } }
+      responses:
+        '204': { $ref: 'common.yaml#/components/responses/NoContent' }
+  /v1/w/{workspace_id}/nodes/{node_id}/move:
+    parameters:
+      - $ref: 'common.yaml#/components/parameters/Workspace'
+      - { name: node_id, in: path, required: true, schema: { $ref: 'common.yaml#/components/schemas/Id' } }
+    post:
+      operationId: moveNode
+      summary: Move a folder or list. If the status set changes, statusMap says where tasks go (required when a status has no same-name match)
+      x-permission: delete on the source parent and create_container on the target
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [version, targetParentId]
+              properties:
+                version: { type: integer }
+                targetParentId: { type: string, format: uuid }
+                position: { type: string }
+                statusMap: { type: object, additionalProperties: { type: string, format: uuid } }
+      responses:
+        '202': { description: Accepted. Large subtrees move in a background workflow; the node shows moving until done }
+        '422': { $ref: 'common.yaml#/components/responses/Problem' }
+  /v1/w/{workspace_id}/nodes/{node_id}/statuses:
+    parameters:
+      - $ref: 'common.yaml#/components/parameters/Workspace'
+      - { name: node_id, in: path, required: true, schema: { $ref: 'common.yaml#/components/schemas/Id' } }
+    get:
+      operationId: getEffectiveStatuses
+      summary: The status set in force here (own or inherited)
+      x-permission: view
+      responses:
+        '200': { description: Status set, content: { application/json: { schema: { $ref: '#/components/schemas/StatusSet' } } } }
+    put:
+      operationId: setStatuses
+      summary: Give this node its own status set, or change it. Removing a status needs replacements
+      x-permission: manage_fields on the node
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [version, statuses]
+              properties:
+                version: { type: integer }
+                inherit: { type: boolean, description: true = drop own set and use the parent's }
+                statuses: { type: array, items: { $ref: '#/components/schemas/Status' } }
+                replacements: { type: object, additionalProperties: { type: string, format: uuid }, description: removed status id -> replacement }
+      responses:
+        '200': { description: Saved, content: { application/json: { schema: { $ref: '#/components/schemas/StatusSet' } } } }
+        '422': { $ref: 'common.yaml#/components/responses/Problem' }
+  /v1/w/{workspace_id}/statuses/{status_id}/required-fields:
+    parameters:
+      - $ref: 'common.yaml#/components/parameters/Workspace'
+      - { name: status_id, in: path, required: true, schema: { $ref: 'common.yaml#/components/schemas/Id' } }
+    put:
+      operationId: setRequiredFields
+      x-permission: manage_fields on the status set owner
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, properties: { fieldIds: { type: array, items: { type: string, format: uuid } } } } } }
+      responses:
+        '204': { $ref: 'common.yaml#/components/responses/NoContent' }
+  /v1/w/{workspace_id}/status-templates:
+    parameters: [ { $ref: 'common.yaml#/components/parameters/Workspace' } ]
+    get:
+      operationId: listStatusTemplates
+      x-permission: member
+      responses:
+        '200': { description: Built-in and tenant templates, content: { application/json: { schema: { type: array, items: { type: object } } } } }
+  /v1/w/{workspace_id}/task-types:
+    parameters: [ { $ref: 'common.yaml#/components/parameters/Workspace' } ]
+    get:
+      operationId: listTaskTypes
+      x-permission: member
+      responses:
+        '200': { description: Task types, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/TaskType' } } } } }
+    post:
+      operationId: createTaskType
+      x-permission: manage_workspace_settings
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/TaskType' } } }
+      responses:
+        '201': { description: Created }
+  /internal/v1/w/{workspace_id}/seed:
+    parameters: [ { $ref: 'common.yaml#/components/parameters/Workspace' } ]
+    post:
+      operationId: seedWorkspace
+      summary: >
+        Internal. Called by access after createWorkspace: creates the first space and the default status set.
+        IDEMPOTENT: calling it again creates nothing new and answers 204 again
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [ownerUserId], properties: { ownerUserId: { type: string, format: uuid } } }
+      responses:
+        '204': { $ref: 'common.yaml#/components/responses/NoContent' }
+  /internal/v1/w/{workspace_id}/snapshot/{aggregate}:
+    parameters:
+      - $ref: 'common.yaml#/components/parameters/Workspace'
+      - { name: aggregate, in: path, required: true, schema: { type: string, enum: [container, status, status_set, task_type, required_field] } }
+      - $ref: 'common.yaml#/components/parameters/Cursor'
+    get:
+      operationId: snapshot
+      summary: Internal. Rebuild copies
+      responses:
+        '200': { description: Page, content: { application/json: { schema: { $ref: 'common.yaml#/components/schemas/Page' } } } }
+components:
+  securitySchemes:
+    bearer: { type: http, scheme: bearer, bearerFormat: JWT }
+  schemas:
+    NodeInput:
+      type: object
+      required: [id, name]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string, maxLength: 200 }
+        description: { type: string }
+        color: { type: string }
+        position: { type: string }
+    Node:
+      allOf:
+        - $ref: 'common.yaml#/components/schemas/Meta'
+        - type: object
+          properties:
+            kind: { type: string, enum: [space, folder, list] }
+            parentId: { type: [string, 'null'], format: uuid }
+            name: { type: string }
+            color: { type: [string, 'null'] }
+            position: { type: string }
+            restricted: { type: boolean }
+            archived: { type: boolean }
+            isSprintFolder: { type: boolean }
+            statusSetId: { type: string, format: uuid }
+            ownsStatusSet: { type: boolean }
+            taskCount: { type: integer, description: approximate above 10000 }
+    Status:
+      type: object
+      required: [name, category]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string, maxLength: 60 }
+        color: { type: string }
+        category: { type: string, enum: [open, custom, done, closed] }
+        position: { type: string }
+    StatusSet:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        version: { type: integer }
+        ownerNodeId: { type: string, format: uuid }
+        statuses: { type: array, items: { $ref: '#/components/schemas/Status' } }
+    TaskType:
+      type: object
+      required: [id, name]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string, description: tenant names, e.g. Activity, Milestone }
+        namePlural: { type: string }
+        icon: { type: string }

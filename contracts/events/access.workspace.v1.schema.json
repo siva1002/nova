@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "access.workspace.v1.schema.json",
+  "title": "Topic access.workspace.v1 (mirrored to the region's global Kafka): access.workspace.created | updated",
+  "allOf": [
+    {
+      "$ref": "envelope.schema.json"
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "access.workspace.created",
+            "access.workspace.updated"
+          ]
+        },
+        "aggregate_type": {
+          "const": "workspace"
+        },
+        "data": {
+          "type": "object",
+          "required": [
+            "after"
+          ],
+          "properties": {
+            "after": {
+              "type": "object",
+              "required": [
+                "id",
+                "version",
+                "name",
+                "status",
+                "cell_id"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "version": {
+                  "type": "integer"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "slug": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "status": {
+                  "enum": [
+                    "provisioning",
+                    "active"
+                  ]
+                },
+                "cell_id": {
+                  "type": "string"
+                },
+                "created_by": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "uuid"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

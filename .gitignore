@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+*.pyc
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.import_linter_cache/
+.env
+deploy/compose/.env
+*.egg-info/
+dist/
+build/
+.coverage
+htmlcov/
+.idea/
+.vscode/
+.devdata/

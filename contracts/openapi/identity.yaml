@@ -1,0 +1,261 @@
+openapi: 3.1.0
+info:
+  title: identity (global)
+  version: 1.0.0
+  description: Sign-up, sign-in, tokens, profile, my workspaces, privacy requests. Email + password only in phase 1.
+servers:
+  - url: https://api.example.invalid
+security:
+  - bearer: []
+paths:
+  /v1/auth/sign-up:
+    post:
+      operationId: signUp
+      security: []
+      summary: Create a user and send a verification email
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password, displayName]
+              properties:
+                email: { type: string, format: email, maxLength: 254 }
+                password: { type: string, minLength: 12, maxLength: 128 }
+                displayName: { type: string, maxLength: 120 }
+                timezone: { type: string }
+      responses:
+        '202': { description: Accepted. Same answer whether or not the email exists (no account probing) }
+        '422': { $ref: 'common.yaml#/components/responses/Problem' }
+        '429': { $ref: 'common.yaml#/components/responses/Problem' }
+  /v1/auth/verify-email:
+    post:
+      operationId: verifyEmail
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [token], properties: { token: { type: string } } }
+      responses:
+        '204': { $ref: 'common.yaml#/components/responses/NoContent' }
+        '410': { $ref: 'common.yaml#/components/responses/Problem' }
+  /v1/auth/sign-in:
+    post:
+      operationId: signIn
+      security: []
+      summary: Email and password. Returns an access token; the refresh token is set as an HttpOnly cookie
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string }
+      responses:
+        '200':
+          description: Signed in
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Tokens' }
+        '401': { $ref: 'common.yaml#/components/responses/Problem' }
+        '429': { $ref: 'common.yaml#/components/responses/Problem' }
+  /v1/auth/refresh:
+    post:
+      operationId: refresh
+      security: []
+      summary: Rotate the refresh token (cookie) and get a new access token. Reuse of an old refresh token ends the whole session
+      responses:
+        '200':
+          description: New tokens
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Tokens' }
+        '401': { $ref: 'common.yaml#/components/responses/Problem' }
+  /v1/auth/sign-out:
+    post:
+      operationId: signOut
+      parameters:
+        - name: all
+          in: query
+          schema: { type: boolean, default: false }
+          description: End every session of this user
+      responses:
+        '204': { $ref: 'common.yaml#/components/responses/NoContent' }
+  /v1/auth/password/forgot:
+    post:
+      operationId: forgotPassword
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [email], properties: { email: { type: string, format: email } } }
+      responses:
+        '202': { description: Always accepted (no account probing) }
+  /v1/auth/password/reset:
+    post:
+      operationId: resetPassword
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, password]
+              properties:
+                token: { type: string }
+                password: { type: string, minLength: 12, maxLength: 128 }
+      responses:
+        '204': { description: Changed; every other session is ended }
+        '410': { $ref: 'common.yaml#/components/responses/Problem' }
+  /.well-known/jwks.json:
+    get:
+      operationId: jwks
+      security: []
+      summary: Public signing keys (cached by the cell router)
+      responses:
+        '200':
+          description: JWK set
+          content:
+            application/json:
+              schema: { type: object, properties: { keys: { type: array, items: { type: object } } } }
+  /v1/me:
+    get:
+      operationId: getMe
+      responses:
+        '200':
+          description: Profile
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+    patch:
+      operationId: updateMe
+      parameters:
+        - $ref: 'common.yaml#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: 'common.yaml#/components/schemas/VersionOnly'
+                - type: object
+                  properties:
+                    displayName: { type: string, maxLength: 120 }
+                    timezone: { type: string }
+                    locale: { type: string }
+                    avatarFileId: { $ref: 'common.yaml#/components/schemas/Id' }
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '409': { $ref: 'common.yaml#/components/responses/Conflict' }
+  /v1/me/password:
+    post:
+      operationId: changePassword
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [currentPassword, newPassword]
+              properties:
+                currentPassword: { type: string }
+                newPassword: { type: string, minLength: 12, maxLength: 128 }
+      responses:
+        '204': { $ref: 'common.yaml#/components/responses/NoContent' }
+        '401': { $ref: 'common.yaml#/components/responses/Problem' }
+  /v1/me/sessions:
+    get:
+      operationId: listSessions
+      responses:
+        '200':
+          description: Active sessions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id: { $ref: 'common.yaml#/components/schemas/Id' }
+                    createdAt: { $ref: 'common.yaml#/components/schemas/Timestamp' }
+                    lastSeenAt: { $ref: 'common.yaml#/components/schemas/Timestamp' }
+                    userAgent: { type: string }
+                    current: { type: boolean }
+  /v1/me/sessions/{session_id}:
+    delete:
+      operationId: endSession
+      parameters:
+        - { name: session_id, in: path, required: true, schema: { $ref: 'common.yaml#/components/schemas/Id' } }
+      responses:
+        '204': { $ref: 'common.yaml#/components/responses/NoContent' }
+  /v1/me/workspaces:
+    get:
+      operationId: myWorkspaces
+      summary: Workspaces of the signed-in user, with the cell each lives in (copy kept from access events)
+      responses:
+        '200':
+          description: List
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    workspaceId: { $ref: 'common.yaml#/components/schemas/Id' }
+                    name: { type: string }
+                    roleKind: { type: string, enum: [owner, admin, member, guest] }
+                    status: { type: string, enum: [active, pending, deactivated] }
+  /v1/privacy/requests:
+    post:
+      operationId: createPrivacyRequest
+      summary: GDPR access (export) or erasure of the signed-in user's personal data, run as a Temporal workflow across all cells
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind]
+              properties:
+                kind: { type: string, enum: [export, erase] }
+      responses:
+        '202':
+          description: Accepted
+          content:
+            application/json:
+              schema: { type: object, properties: { id: { $ref: 'common.yaml#/components/schemas/Id' }, status: { type: string } } }
+components:
+  securitySchemes:
+    bearer: { type: http, scheme: bearer, bearerFormat: JWT }
+  schemas:
+    Tokens:
+      type: object
+      required: [accessToken, expiresIn]
+      properties:
+        accessToken: { type: string }
+        expiresIn: { type: integer, description: seconds, example: 900 }
+    User:
+      allOf:
+        - $ref: 'common.yaml#/components/schemas/Meta'
+        - type: object
+          properties:
+            email: { type: string, format: email }
+            emailVerified: { type: boolean }
+            displayName: { type: string }
+            initials: { type: string }
+            color: { type: string }
+            avatarUrl: { type: [string, 'null'] }
+            timezone: { type: string }
+            locale: { type: string }

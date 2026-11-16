@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "tasks.field_value.v1.schema.json",
+  "title": "Topic tasks.field_value.v1: tasks.field_value.changed (one task, one or more fields, including formula results)",
+  "allOf": [
+    { "$ref": "envelope.schema.json" },
+    {
+      "type": "object",
+      "properties": {
+        "type": { "const": "tasks.field_value.changed" },
+        "aggregate_type": { "const": "task" },
+        "data": {
+          "type": "object",
+          "required": ["after"],
+          "properties": {
+            "after": {
+              "type": "object",
+              "required": ["task_id", "values"],
+              "properties": {
+                "task_id": { "type": "string", "format": "uuid" },
+                "home_list_id": { "type": "string", "format": "uuid" },
+                "values": {
+                  "type": "object",
+                  "description": "field id -> value; only the fields that changed",
+                  "additionalProperties": {
+                    "type": "object",
+                    "properties": {
+                      "value": {},
+                      "computed": { "type": "boolean" },
+                      "error": { "type": ["string", "null"] }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

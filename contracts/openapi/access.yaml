@@ -1,0 +1,558 @@
+openapi: 3.1.0
+info:
+  title: access (per cell)
+  version: 1.0.0
+  description: >
+    Workspace settings, members, invites, roles, groups, grants, task shares, people fields, and the permission
+    engine (plan/tech/04-permissions-spec.md). Required permission is named in each operation as x-permission.
+servers:
+  - url: https://api.example.invalid
+security:
+  - bearer: []
+paths:
+  /v1/workspaces:
+    post:
+      operationId: createWorkspace
+      summary: Handled by routing, which places the workspace in a cell and calls access there
+      x-permission: any signed-in user
+      parameters:
+        - $ref: 'common.yaml#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id, name, slug]
+              properties:
+                id: { $ref: 'common.yaml#/components/schemas/Id' }
+                name: { type: string, maxLength: 120 }
+                slug: { type: string, pattern: '^[a-z0-9-]{3,40}$' }
+                region: { type: string, description: 'Optional until the routing service places workspaces (sprint 8); ignored while there is one cell' }
+      responses:
+        '202':
+          description: >
+            Created. status is 'provisioning' until hierarchy has seeded the first space, then 'active';
+            poll GET /v1/w/{id}/workspace. Sending the same id again returns the same workspace (idempotent).
+          content: { application/json: { schema: { $ref: '#/components/schemas/Workspace' } } }
+        '409': { $ref: 'common.yaml#/components/responses/Problem' }
+        '422': { $ref: 'common.yaml#/components/responses/Problem' }
+  /v1/w/{workspace_id}/workspace:
+    parameters: [ { $ref: 'common.yaml#/components/parameters/Workspace' } ]
+    get:
+      operationId: getWorkspace
+      x-permission: member
+      responses:
+        '200': { description: Workspace, content: { application/json: { schema: { $ref: '#/components/schemas/Workspace' } } } }
+    patch:
+      operationId: updateWorkspace
+      x-permission: manage_workspace_settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: 'common.yaml#/components/schemas/VersionOnly'
+                - type: object
+                  properties:
+                    name: { type: string }
+                    settings: { $ref: '#/components/schemas/WorkspaceSettings' }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Workspace' } } } }
+        '409': { $ref: 'common.yaml#/components/responses/Conflict' }
+  /v1/w/{workspace_id}/members:
+    parameters: [ { $ref: 'common.yaml#/components/parameters/Workspace' } ]
+    get:
+      operationId: listMembers
+      x-permission: member (guests see only people on shared items)
+      parameters:
+        - $ref: 'common.yaml#/components/parameters/Limit'
+        - $ref: 'common.yaml#/components/parameters/Cursor'
+        - { name: q, in: query, schema: { type: string } }
+        - { name: status, in: query, schema: { type: string, enum: [active, pending, deactivated] } }
+      responses:
+        '200': { description: Page of members, content: { application/json: { schema: { $ref: '#/components/schemas/MemberPage' } } } }
+  /v1/w/{workspace_id}/members/{user_id}:
+    parameters:
+      - $ref: 'common.yaml#/components/parameters/Workspace'
+      - { name: user_id, in: path, required: true, schema: { $ref: 'common.yaml#/components/schemas/Id' } }
+    get:
+      operationId: getMember
+      x-permission: member
+      responses:
+        '200': { description: Member, content: { application/json: { schema: { $ref: '#/components/schemas/Member' } } } }
+    patch:
+      operationId: updateMember
+      summary: Change workspace role or status (deactivate, reactivate). R10 applies to role changes
+      x-permission: manage_users
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: 'common.yaml#/components/schemas/VersionOnly'
+                - type: object
+                  properties:
+                    roleKind: { type: string, enum: [admin, member, guest] }
+                    customRoleId: { type: [string, 'null'], format: uuid }
+                    status: { type: string, enum: [active, deactivated] }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Member' } } } }
+        '403': { $ref: 'common.yaml#/components/responses/Problem' }
+        '409': { $ref: 'common.yaml#/components/responses/Conflict' }
+  /v1/w/{workspace_id}/invites:
+    parameters: [ { $ref: 'common.yaml#/components/parameters/Workspace' } ]
+    get:
+      operationId: listInvites
+      x-permission: manage_users
+      responses:
+        '200': { description: Pending invites, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Invite' } } } } }
+    post:
+      operationId: createInvites
+      summary: Invite up to 100 people by email, each with a workspace role and optional node grants (R10)
+      x-permission: manage_users
+      parameters: [ { $ref: 'common.yaml#/components/parameters/IdempotencyKey' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [invites]
+              properties:
+                invites:
+                  type: array
+                  maxItems: 100
+                  items:
+                    type: object
+                    required: [email, roleKind]
+                    properties:
+                      email: { type: string, format: email }
+                      roleKind: { type: string, enum: [admin, member, guest] }
+                      customRoleId: { type: string, format: uuid }
+                      grants: { type: array, items: { $ref: '#/components/schemas/GrantInput' } }
+      responses:
+        '207': { description: Result per invite in request order, content: { application/json: { schema: { $ref: '#/components/schemas/InviteResults' } } } }
+  /v1/w/{workspace_id}/invites/{invite_id}:
+    parameters:
+      - $ref: 'common.yaml#/components/parameters/Workspace'
+      - { name: invite_id, in: path, required: true, schema: { $ref: 'common.yaml#/components/schemas/Id' } }
+    delete:
+      operationId: revokeInvite
+      x-permission: manage_users
+      responses:
+        '204': { $ref: 'common.yaml#/components/responses/NoContent' }
+  /v1/invites/accept:
+    post:
+      operationId: acceptInvite
+      summary: Routing finds the workspace from the token hash and forwards to its cell
+      x-permission: signed-in user whose email matches the invite
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [token], properties: { token: { type: string } } }
+      responses:
+        '200': { description: Joined, content: { application/json: { schema: { $ref: '#/components/schemas/Member' } } } }
+        '410': { $ref: 'common.yaml#/components/responses/Problem' }
+  /v1/w/{workspace_id}/capabilities:
+    parameters: [ { $ref: 'common.yaml#/components/parameters/Workspace' } ]
+    get:
+      operationId: listCapabilities
+      x-permission: member
+      responses:
+        '200':
+          description: All permission keys with scope (workspace or node)
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { type: object, properties: { key: { type: string }, scope: { type: string, enum: [workspace, node] }, description: { type: string } } }
+  /v1/w/{workspace_id}/roles:
+    parameters: [ { $ref: 'common.yaml#/components/parameters/Workspace' } ]
+    get:
+      operationId: listRoles
+      x-permission: member
+      responses:
+        '200': { description: Roles, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Role' } } } } }
+    post:
+      operationId: createRole
+      x-permission: manage_roles (cannot add a permission the caller lacks, R10)
+      parameters: [ { $ref: 'common.yaml#/components/parameters/IdempotencyKey' } ]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/RoleInput' } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Role' } } } }
+        '403': { $ref: 'common.yaml#/components/responses/Problem' }
+  /v1/w/{workspace_id}/roles/{role_id}:
+    parameters:
+      - $ref: 'common.yaml#/components/parameters/Workspace'
+      - { name: role_id, in: path, required: true, schema: { $ref: 'common.yaml#/components/schemas/Id' } }
+    patch:
+      operationId: updateRole
+      x-permission: manage_roles (R10)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: 'common.yaml#/components/schemas/VersionOnly'
+                - $ref: '#/components/schemas/RoleInput'
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Role' } } } }
+        '409': { $ref: 'common.yaml#/components/responses/Conflict' }
+    delete:
+      operationId: deleteRole
+      summary: Fails with 409 while members or grants use it, unless replaceWith is given
+      x-permission: manage_roles
+      parameters:
+        - { name: replaceWith, in: query, schema: { $ref: 'common.yaml#/components/schemas/Id' } }
+      responses:
+        '204': { $ref: 'common.yaml#/components/responses/NoContent' }
+        '409': { $ref: 'common.yaml#/components/responses/Problem' }
+  /v1/w/{workspace_id}/groups:
+    parameters: [ { $ref: 'common.yaml#/components/parameters/Workspace' } ]
+    get:
+      operationId: listGroups
+      x-permission: member
+      responses:
+        '200': { description: Groups, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Group' } } } } }
+    post:
+      operationId: createGroup
+      x-permission: manage_users
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [id, name], properties: { id: { type: string, format: uuid }, name: { type: string }, memberIds: { type: array, items: { type: string, format: uuid } } } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Group' } } } }
+  /v1/w/{workspace_id}/groups/{group_id}:
+    parameters:
+      - $ref: 'common.yaml#/components/parameters/Workspace'
+      - { name: group_id, in: path, required: true, schema: { $ref: 'common.yaml#/components/schemas/Id' } }
+    patch:
+      operationId: updateGroup
+      x-permission: manage_users
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: 'common.yaml#/components/schemas/VersionOnly'
+                - type: object
+                  properties:
+                    name: { type: string }
+                    members: { $ref: 'common.yaml#/components/schemas/SetChange' }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Group' } } } }
+    delete:
+      operationId: deleteGroup
+      x-permission: manage_users
+      responses:
+        '204': { $ref: 'common.yaml#/components/responses/NoContent' }
+  /v1/w/{workspace_id}/nodes/{node_id}/access:
+    parameters:
+      - $ref: 'common.yaml#/components/parameters/Workspace'
+      - { name: node_id, in: path, required: true, schema: { $ref: 'common.yaml#/components/schemas/Id' } }
+    get:
+      operationId: whoHasAccess
+      summary: Every user with access to the node and the grants that give it
+      x-permission: view on the node
+      responses:
+        '200':
+          description: Access list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  restricted: { type: boolean }
+                  entries:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        userId: { type: string, format: uuid }
+                        caps: { type: object, additionalProperties: { type: string, enum: [all, own] } }
+                        because: { type: array, items: { $ref: '#/components/schemas/Grant' } }
+  /v1/w/{workspace_id}/nodes/{node_id}/grants:
+    parameters:
+      - $ref: 'common.yaml#/components/parameters/Workspace'
+      - { name: node_id, in: path, required: true, schema: { $ref: 'common.yaml#/components/schemas/Id' } }
+    get:
+      operationId: listGrants
+      x-permission: view on the node
+      responses:
+        '200': { description: Grants on this node, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Grant' } } } } }
+    post:
+      operationId: changeGrants
+      summary: Add, change or remove grants in one call. Adding needs manage_access and R10; removing needs manage_access
+      x-permission: manage_access on the node
+      parameters: [ { $ref: 'common.yaml#/components/parameters/IdempotencyKey' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                add: { type: array, items: { $ref: '#/components/schemas/GrantInput' }, maxItems: 200 }
+                remove: { type: array, items: { type: string, format: uuid }, maxItems: 200 }
+                restricted: { type: boolean, description: make the node private or open }
+      responses:
+        '200': { description: Grants now, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Grant' } } } } }
+        '403': { $ref: 'common.yaml#/components/responses/Problem' }
+  /v1/w/{workspace_id}/tasks/{task_id}/shares:
+    parameters:
+      - $ref: 'common.yaml#/components/parameters/Workspace'
+      - { name: task_id, in: path, required: true, schema: { $ref: 'common.yaml#/components/schemas/Id' } }
+    post:
+      operationId: shareTask
+      x-permission: share_externally on the task (R10 for the role given)
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [userId, roleId], properties: { userId: { type: string, format: uuid }, roleId: { type: string, format: uuid } } } } }
+      responses:
+        '201': { description: Shared }
+        '403': { $ref: 'common.yaml#/components/responses/Problem' }
+  /v1/w/{workspace_id}/me/permissions:
+    parameters: [ { $ref: 'common.yaml#/components/parameters/Workspace' } ]
+    get:
+      operationId: myPermissions
+      summary: Permissions of the caller on a node (or workspace-wide), for hiding controls (R11)
+      parameters:
+        - { name: node, in: query, schema: { $ref: 'common.yaml#/components/schemas/Id' } }
+      responses:
+        '200':
+          description: Map of permission to all or own
+          content: { application/json: { schema: { type: object, additionalProperties: { type: string, enum: [all, own] } } } }
+  /v1/w/{workspace_id}/people-fields:
+    parameters: [ { $ref: 'common.yaml#/components/parameters/Workspace' } ]
+    get:
+      operationId: listPeopleFields
+      x-permission: member (values filtered by people_field_access)
+      responses:
+        '200': { description: Definitions, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/PeopleField' } } } } }
+    post:
+      operationId: createPeopleField
+      x-permission: manage_users
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/PeopleField' } } }
+      responses:
+        '201': { description: Created }
+  /v1/w/{workspace_id}/members/{user_id}/people-fields/{field_id}:
+    parameters:
+      - $ref: 'common.yaml#/components/parameters/Workspace'
+      - { name: user_id, in: path, required: true, schema: { $ref: 'common.yaml#/components/schemas/Id' } }
+      - { name: field_id, in: path, required: true, schema: { $ref: 'common.yaml#/components/schemas/Id' } }
+    put:
+      operationId: setPeopleFieldValue
+      x-permission: manage_users
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                version: { type: integer }
+                text: { type: string }
+                number: { type: string }
+                money: { $ref: 'common.yaml#/components/schemas/Money' }
+                date: { type: string, format: date }
+                optionIds: { type: array, items: { type: string, format: uuid } }
+      responses:
+        '200': { description: Saved }
+        '409': { $ref: 'common.yaml#/components/responses/Conflict' }
+  /internal/v1/w/{workspace_id}/authz/compile:
+    parameters: [ { $ref: 'common.yaml#/components/parameters/Workspace' } ]
+    post:
+      operationId: compilePermissionMap
+      summary: Internal. Build the permission map for one user (cached in Redis by the caller's library)
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [userId], properties: { userId: { type: string, format: uuid } } } } }
+      responses:
+        '200': { description: Map, content: { application/json: { schema: { $ref: '#/components/schemas/PermissionMap' } } } }
+  /internal/v1/w/{workspace_id}/authz/check:
+    parameters: [ { $ref: 'common.yaml#/components/parameters/Workspace' } ]
+    post:
+      operationId: checkPermissions
+      summary: Internal. Up to 500 checks in one call
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [userId, checks]
+              properties:
+                userId: { type: string, format: uuid }
+                checks:
+                  type: array
+                  maxItems: 500
+                  items:
+                    type: object
+                    required: [permission]
+                    properties:
+                      permission: { type: string }
+                      nodeIds: { type: array, items: { type: string, format: uuid }, description: lists the task is in, or one node }
+                      taskId: { type: string, format: uuid }
+                      creatorId: { type: string, format: uuid }
+                      assigneeIds: { type: array, items: { type: string, format: uuid } }
+      responses:
+        '200': { description: One answer per check, content: { application/json: { schema: { type: array, items: { type: boolean } } } } }
+  /internal/v1/w/{workspace_id}/snapshot/{aggregate}:
+    parameters:
+      - $ref: 'common.yaml#/components/parameters/Workspace'
+      - { name: aggregate, in: path, required: true, schema: { type: string, enum: [member, role, grant, people_value] } }
+      - $ref: 'common.yaml#/components/parameters/Cursor'
+    get:
+      operationId: snapshot
+      summary: Internal. Page through all rows with versions, to rebuild a copy (plan/tech/03-events.md section 6)
+      responses:
+        '200': { description: Page, content: { application/json: { schema: { $ref: 'common.yaml#/components/schemas/Page' } } } }
+components:
+  securitySchemes:
+    bearer: { type: http, scheme: bearer, bearerFormat: JWT }
+  schemas:
+    WorkspaceSettings:
+      type: object
+      description: Tenant settings with product defaults (plan/ux/flows/90-open-questions.md)
+      properties:
+        timezone: { type: string }
+        weekStart: { type: integer, minimum: 0, maximum: 6 }
+        allowGuests: { type: boolean }
+        adminsSeeRestricted: { type: boolean, default: false }
+        openDependencyOnDone: { type: string, enum: [allow, warn, block], default: warn }
+        longTimerNotifyHours: { type: integer, default: 10 }
+        automationFailuresBeforePause: { type: integer, default: 5 }
+        timesheetPeriod: { type: string, enum: [weekly, biweekly, monthly], default: weekly }
+        timeDefaultBillable: { type: boolean, default: false }
+    Workspace:
+      allOf:
+        - $ref: 'common.yaml#/components/schemas/Meta'
+        - type: object
+          properties:
+            name: { type: string }
+            slug: { type: string }
+            status: { type: string }
+            settings: { $ref: '#/components/schemas/WorkspaceSettings' }
+    Member:
+      allOf:
+        - $ref: 'common.yaml#/components/schemas/Meta'
+        - type: object
+          properties:
+            userId: { type: string, format: uuid }
+            displayName: { type: string }
+            email: { type: string, format: email }
+            roleKind: { type: string, enum: [owner, admin, member, guest] }
+            customRoleId: { type: [string, 'null'], format: uuid }
+            status: { type: string, enum: [active, pending, deactivated] }
+            joinedAt: { type: [string, 'null'], format: date-time }
+    MemberPage:
+      type: object
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/Member' } }
+        nextCursor: { type: [string, 'null'] }
+    Invite:
+      allOf:
+        - $ref: 'common.yaml#/components/schemas/Meta'
+        - type: object
+          properties:
+            email: { type: string, format: email }
+            roleKind: { type: string }
+            expiresAt: { type: string, format: date-time }
+            invitedBy: { type: string, format: uuid }
+    InviteResults:
+      type: object
+      required: [results]
+      properties:
+        results:
+          type: array
+          items:
+            type: object
+            required: [email, status]
+            properties:
+              email: { type: string }
+              status: { type: integer, description: '201 created, 409 already a member or already invited, 422 invalid' }
+              id: { type: [string, 'null'], format: uuid }
+              inviteToken:
+                type: [string, 'null']
+                description: >
+                  The link token, returned ONCE to the inviter (the web app shows it as a link to copy).
+                  Only its hash is stored. Removed from this response when invites are emailed (sprint 33).
+              expiresAt: { type: [string, 'null'], format: date-time }
+              problem:
+                type: [object, 'null']
+                properties: { code: { type: string }, detail: { type: string } }
+    RoleInput:
+      type: object
+      required: [name, scope, capabilities]
+      properties:
+        name: { type: string, maxLength: 80 }
+        description: { type: string }
+        scope: { type: string, enum: [workspace, node] }
+        capabilities: { type: object, additionalProperties: { type: string, enum: [all, own] } }
+    Role:
+      allOf:
+        - $ref: 'common.yaml#/components/schemas/Meta'
+        - $ref: '#/components/schemas/RoleInput'
+        - type: object
+          properties:
+            key: { type: [string, 'null'], description: seeded template key, e.g. limited_member }
+            inUse: { type: integer }
+    Group:
+      allOf:
+        - $ref: 'common.yaml#/components/schemas/Meta'
+        - type: object
+          properties:
+            name: { type: string }
+            memberIds: { type: array, items: { type: string, format: uuid } }
+    GrantInput:
+      type: object
+      required: [roleId]
+      properties:
+        nodeId: { type: string, format: uuid }
+        userId: { type: string, format: uuid }
+        groupId: { type: string, format: uuid }
+        roleId: { type: string, format: uuid }
+    Grant:
+      allOf:
+        - $ref: 'common.yaml#/components/schemas/Meta'
+        - $ref: '#/components/schemas/GrantInput'
+        - type: object
+          properties:
+            grantedBy: { type: string, format: uuid }
+    PeopleField:
+      type: object
+      required: [id, name, type]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        type: { type: string, enum: [text, number, currency, date, dropdown, label, url] }
+        access: { type: string, enum: [everyone, admins, managers_and_admins] }
+        options: { type: array, items: { type: object, properties: { id: { type: string, format: uuid }, name: { type: string } } } }
+    PermissionMap:
+      type: object
+      required: [epoch, userId, isOwner, roleKind, workspaceCaps, nodes]
+      properties:
+        epoch: { type: integer }
+        userId: { type: string, format: uuid }
+        isOwner: { type: boolean }
+        roleKind: { type: string }
+        workspaceCaps: { type: object, additionalProperties: { type: string, enum: [all, own] } }
+        defaultCaps: { type: [object, 'null'], additionalProperties: { type: string, enum: [all, own] } }
+        nodes:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              restricted: { type: boolean }
+              caps: { type: object, additionalProperties: { type: string, enum: [all, own] } }
+        sharedTasks: { type: object, additionalProperties: { type: object } }

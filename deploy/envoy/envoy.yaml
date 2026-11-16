@@ -1,0 +1,65 @@
+# Envoy: the single front door in the MVP. It routes by URL path straight to the 5 services.
+# (No cell router yet: one cell only. In sprints 8-9 the routing service goes in FRONT of this,
+#  and these URLs do not change.)
+#
+# Order matters: Envoy takes the first matching route, so specific paths come before general ones.
+# X-Forwarded-For: Envoy passes it through unchanged (use_remote_address is off), so the last entry is the one
+# Caddy wrote = the real client. That is why services run with TRUSTED_PROXY_HOPS=1 (common/web.py client_ip).
+# /internal/* is deliberately NOT routed: service-to-service calls use the Compose network directly.
+static_resources:
+  listeners:
+    - name: main
+      address: { socket_address: { address: 0.0.0.0, port_value: 8080 } }
+      filter_chains:
+        - filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: ingress
+                generate_request_id: true            # becomes X-Request-Id, carried into every service log line
+                always_set_request_id_in_response: true
+                http_filters:
+                  - name: envoy.filters.http.router
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+                route_config:
+                  name: local
+                  virtual_hosts:
+                    - name: api
+                      domains: ["*"]
+                      routes:
+                        # ---- identity: sign-up/in/out, tokens, "me", public keys
+                        - { match: { prefix: "/v1/auth" },          route: { cluster: identity } }
+                        - { match: { prefix: "/.well-known" },      route: { cluster: identity } }
+                        # MVP: "my workspaces" is served by access (identity's copy comes in sprint 3). Must precede /v1/me.
+                        - { match: { prefix: "/v1/me/workspaces" }, route: { cluster: access } }
+                        - { match: { prefix: "/v1/me" },            route: { cluster: identity } }
+                        # ---- access: workspaces, members, invites, roles
+                        - { match: { prefix: "/v1/workspaces" },    route: { cluster: access } }
+                        - { match: { prefix: "/v1/invites" },       route: { cluster: access } }
+                        # ---- per-workspace routes: /v1/w/{workspace_id}/<resource>
+                        # node access/grants belong to access, although other /nodes/* routes belong to hierarchy
+                        - match: { safe_regex: { regex: "^/v1/w/[^/]+/nodes/[^/]+/(access|grants)(/.*)?$" } }
+                          route: { cluster: access }
+                        - match: { safe_regex: { regex: "^/v1/w/[^/]+/(tasks|fields|templates)(/.*)?$" } }
+                          route: { cluster: tasks }
+                        - match: { safe_regex: { regex: "^/v1/w/[^/]+/time(-entries)?(/.*)?$" } }
+                          route: { cluster: time }
+                        - match: { safe_regex: { regex: "^/v1/w/[^/]+/(tree|spaces|folders|lists|nodes|status-templates|task-types)(/.*)?$" } }
+                          route: { cluster: hierarchy }
+                        # everything else under a workspace (members, invites, roles, groups, capabilities, me/permissions)
+                        - match: { safe_regex: { regex: "^/v1/w/[^/]+(/.*)?$" } }
+                          route: { cluster: access }
+                        # health of the front door itself
+                        - match: { path: "/healthz" }
+                          direct_response: { status: 200, body: { inline_string: "ok" } }
+
+  clusters:
+    - { name: identity,  type: STRICT_DNS, load_assignment: { cluster_name: identity,  endpoints: [ { lb_endpoints: [ { endpoint: { address: { socket_address: { address: identity,  port_value: 8000 } } } } ] } ] } }
+    - { name: access,    type: STRICT_DNS, load_assignment: { cluster_name: access,    endpoints: [ { lb_endpoints: [ { endpoint: { address: { socket_address: { address: access,    port_value: 8000 } } } } ] } ] } }
+    - { name: hierarchy, type: STRICT_DNS, load_assignment: { cluster_name: hierarchy, endpoints: [ { lb_endpoints: [ { endpoint: { address: { socket_address: { address: hierarchy, port_value: 8000 } } } } ] } ] } }
+    - { name: tasks,     type: STRICT_DNS, load_assignment: { cluster_name: tasks,     endpoints: [ { lb_endpoints: [ { endpoint: { address: { socket_address: { address: tasks,     port_value: 8000 } } } } ] } ] } }
+    - { name: time,      type: STRICT_DNS, load_assignment: { cluster_name: time,      endpoints: [ { lb_endpoints: [ { endpoint: { address: { socket_address: { address: time,      port_value: 8000 } } } } ] } ] } }
+
+admin:
+  address: { socket_address: { address: 127.0.0.1, port_value: 9901 } }

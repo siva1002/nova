@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "hierarchy.container.v1.schema.json",
+  "title": "Topic hierarchy.container.v1: hierarchy.container.created | updated | moved | archived | deleted",
+  "allOf": [
+    { "$ref": "envelope.schema.json" },
+    {
+      "type": "object",
+      "properties": {
+        "type": { "enum": ["hierarchy.container.created", "hierarchy.container.updated", "hierarchy.container.moved", "hierarchy.container.archived", "hierarchy.container.deleted"] },
+        "aggregate_type": { "enum": ["space", "folder", "list"] },
+        "data": {
+          "type": "object",
+          "required": ["after"],
+          "properties": {
+            "after": {
+              "type": "object",
+              "required": ["id", "version", "kind", "ancestor_ids", "is_restricted", "status_set_id"],
+              "properties": {
+                "id": { "type": "string", "format": "uuid" },
+                "version": { "type": "integer" },
+                "kind": { "enum": ["space", "folder", "list"] },
+                "parent_id": { "type": ["string", "null"], "format": "uuid" },
+                "space_id": { "type": "string", "format": "uuid" },
+                "folder_id": { "type": ["string", "null"], "format": "uuid" },
+                "ancestor_ids": { "type": "array", "items": { "type": "string", "format": "uuid" } },
+                "name": { "type": "string" },
+                "is_restricted": { "type": "boolean" },
+                "is_sprint_folder": { "type": "boolean" },
+                "status_set_id": { "type": "string", "format": "uuid" },
+                "archived": { "type": "boolean" },
+                "deleted": { "type": "boolean" },
+                "moved_descendant_ids": { "type": "array", "items": { "type": "string", "format": "uuid" }, "description": "on moved: every node below whose ancestors changed" }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

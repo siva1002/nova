@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "tasks.task.v1.schema.json",
+  "title": "Topic tasks.task.v1: tasks.task.created | updated | status_changed | moved | archived | deleted | restored",
+  "allOf": [
+    { "$ref": "envelope.schema.json" },
+    {
+      "type": "object",
+      "properties": {
+        "type": { "enum": ["tasks.task.created", "tasks.task.updated", "tasks.task.status_changed", "tasks.task.moved", "tasks.task.archived", "tasks.task.deleted", "tasks.task.restored"] },
+        "aggregate_type": { "const": "task" },
+        "data": {
+          "type": "object",
+          "required": ["after"],
+          "properties": {
+            "after": { "$ref": "#/$defs/task" }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "task": {
+      "type": "object",
+      "required": ["id", "version", "number", "title", "home_list_id", "list_ids", "status_id", "status_category", "created_by", "assignee_ids"],
+      "properties": {
+        "id": { "type": "string", "format": "uuid" },
+        "version": { "type": "integer" },
+        "number": { "type": "integer" },
+        "title": { "type": "string" },
+        "description_excerpt": { "type": "string", "maxLength": 4096 },
+        "home_list_id": { "type": "string", "format": "uuid" },
+        "list_ids": { "type": "array", "items": { "type": "string", "format": "uuid" } },
+        "ancestor_node_ids": { "type": "array", "items": { "type": "string", "format": "uuid" }, "description": "space, folder, list of the home list (for search filters)" },
+        "parent_task_id": { "type": ["string", "null"], "format": "uuid" },
+        "root_task_id": { "type": ["string", "null"], "format": "uuid" },
+        "task_type_id": { "type": ["string", "null"], "format": "uuid" },
+        "status_id": { "type": "string", "format": "uuid" },
+        "status_category": { "enum": ["open", "custom", "done", "closed"] },
+        "priority": { "type": ["integer", "null"] },
+        "start_at": { "type": ["string", "null"], "format": "date-time" },
+        "due_at": { "type": ["string", "null"], "format": "date-time" },
+        "done_at": { "type": ["string", "null"], "format": "date-time" },
+        "time_estimate_ms": { "type": ["integer", "null"] },
+        "points": { "type": ["number", "null"] },
+        "created_by": { "type": "string", "format": "uuid" },
+        "assignee_ids": { "type": "array", "items": { "type": "string", "format": "uuid" } },
+        "watcher_ids": { "type": "array", "items": { "type": "string", "format": "uuid" }, "description": "for notification fan-out without a callback" },
+        "tag_ids": { "type": "array", "items": { "type": "string", "format": "uuid" } },
+        "share_user_ids": { "type": "array", "items": { "type": "string", "format": "uuid" } },
+        "archived": { "type": "boolean" },
+        "deleted": { "type": "boolean" }
+      }
+    }
+  }
+}

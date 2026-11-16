@@ -1,0 +1,13 @@
+# Caddy: automatic HTTPS in front of Envoy on the single EC2 server (task S1-13).
+# Replace api.example.com with the real domain; point its DNS A record at the server first.
+# Caddy fetches and renews the certificate on its own. Only port 443 (and 80 for the challenge) is open.
+api.example.com {
+	reverse_proxy envoy:8080
+	encode zstd gzip
+	log {
+		output file /var/log/caddy/access.log {
+			roll_size 50mb
+			roll_keep 10
+		}
+	}
+}

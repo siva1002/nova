@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "access.member.v1.schema.json",
+  "title": "Topic access.member.v1 (mirrored to the region's global Kafka): access.member.added | updated | removed",
+  "allOf": [
+    { "$ref": "envelope.schema.json" },
+    {
+      "type": "object",
+      "properties": {
+        "type": { "enum": ["access.member.added", "access.member.updated", "access.member.removed"] },
+        "aggregate_type": { "const": "member" },
+        "data": {
+          "type": "object",
+          "required": ["after"],
+          "properties": {
+            "after": {
+              "type": "object",
+              "required": ["user_id", "version", "role_kind", "status", "cell_id", "workspace_name"],
+              "properties": {
+                "user_id": { "type": "string", "format": "uuid" },
+                "version": { "type": "integer" },
+                "role_kind": { "enum": ["owner", "admin", "member", "guest"] },
+                "custom_role_id": { "type": ["string", "null"], "format": "uuid" },
+                "status": { "enum": ["active", "pending", "deactivated"] },
+                "cell_id": { "type": "string" },
+                "workspace_name": { "type": "string" },
+                "group_ids": { "type": "array", "items": { "type": "string", "format": "uuid" } }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

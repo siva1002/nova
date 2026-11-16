@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "time.entry.v1.schema.json",
+  "title": "Topic time.entry.v1: time.entry.started | stopped | created | updated | deleted",
+  "description": "tasks consumes this to keep task_time_totals, which formulas read (Actual Cost).",
+  "allOf": [
+    { "$ref": "envelope.schema.json" },
+    {
+      "type": "object",
+      "properties": {
+        "type": { "enum": ["time.entry.started", "time.entry.stopped", "time.entry.created", "time.entry.updated", "time.entry.deleted"] },
+        "aggregate_type": { "const": "time_entry" },
+        "data": {
+          "type": "object",
+          "required": ["after"],
+          "properties": {
+            "after": {
+              "type": "object",
+              "required": ["id", "version", "user_id", "started_at", "billable", "deleted"],
+              "properties": {
+                "id": { "type": "string", "format": "uuid" },
+                "version": { "type": "integer" },
+                "task_id": { "type": ["string", "null"], "format": "uuid" },
+                "list_id": { "type": ["string", "null"], "format": "uuid" },
+                "user_id": { "type": "string", "format": "uuid" },
+                "started_at": { "type": "string", "format": "date-time" },
+                "ended_at": { "type": ["string", "null"], "format": "date-time" },
+                "duration_ms": { "type": ["integer", "null"], "minimum": 0, "description": "null while running" },
+                "billable": { "type": "boolean" },
+                "locked": { "type": "boolean" },
+                "deleted": { "type": "boolean" }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

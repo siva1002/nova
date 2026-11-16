@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "envelope.schema.json",
+  "title": "Event envelope (every event on every topic)",
+  "description": "plan/tech/03-events.md section 2. Kafka key = workspace_id.",
+  "type": "object",
+  "required": ["id", "type", "schema_version", "workspace_id", "aggregate_type", "aggregate_id", "occurred_at", "actor", "depth", "data"],
+  "properties": {
+    "id": { "type": "string", "format": "uuid", "description": "uuidv7; consumers dedupe on it" },
+    "type": { "type": "string", "pattern": "^[a-z_]+\\.[a-z_]+\\.[a-z_]+$", "examples": ["tasks.task.updated"] },
+    "schema_version": { "type": "integer", "minimum": 1 },
+    "workspace_id": { "type": "string", "format": "uuid" },
+    "aggregate_type": { "type": "string" },
+    "aggregate_id": { "type": "string", "format": "uuid" },
+    "aggregate_version": { "type": ["integer", "null"], "minimum": 1 },
+    "occurred_at": { "type": "string", "format": "date-time" },
+    "actor": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "enum": ["user", "automation", "import", "system"] },
+        "id": { "type": "string", "format": "uuid", "description": "user id, rule id or import job id" }
+      }
+    },
+    "causation_id": { "type": ["string", "null"], "format": "uuid" },
+    "depth": { "type": "integer", "minimum": 0, "maximum": 5 },
+    "traceparent": { "type": "string" },
+    "data": {
+      "type": "object",
+      "properties": {
+        "after": { "type": ["object", "null"], "description": "full object after the change; null on hard delete" },
+        "changes": { "type": "array", "items": { "$ref": "#/$defs/change" } },
+        "truncated": { "type": "boolean" }
+      }
+    }
+  },
+  "$defs": {
+    "change": {
+      "type": "object",
+      "required": ["field"],
+      "properties": {
+        "field": { "type": "string" },
+        "before": {},
+        "after": {},
+        "add": { "type": "array" },
+        "rem": { "type": "array" }
+      }
+    }
+  }
+}

@@ -1,0 +1,138 @@
+# ROOT pyproject: the uv workspace and the shared tool configuration.
+# It owns NO code. Code lives in libs/ and services/. One lockfile (uv.lock) pins every version for all of them.
+#
+#   uv sync            install everything into .venv
+#   uv run pytest      run all tests
+#   make check         lint + types + import rules + tests (what CI runs)
+
+[project]
+name = "work-platform"
+version = "0.0.0"
+requires-python = ">=3.12"
+dependencies = []
+
+[dependency-groups]
+# Dev tools, shared by every package. Nothing here ships in a service image.
+dev = [
+  "ruff>=0.6",
+  "mypy>=1.11",
+  "pytest>=8.3",
+  "pytest-asyncio>=0.24",
+  "pgserver>=0.1.4",                # a real PostgreSQL 16 as a pip package: integration tests need no Docker
+  "import-linter>=2.0",              # enforces the independence rules below
+  "openapi-spec-validator>=0.7",
+  "pyyaml>=6",
+  "pre-commit>=3.8",
+]
+
+[tool.uv.workspace]
+members = ["libs/*", "services/*"]
+
+[tool.uv.sources]
+common = { workspace = true }
+
+# ---------------------------------------------------------------- ruff
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+extend-exclude = ["tools/db-split", "contracts/validate.py", "services/*/migrations/sql"]
+src = ["libs/common/src", "services/*/src", "services/*/tests", "libs/common/tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "ASYNC", "S", "C4", "SIM", "RUF"]
+ignore = ["S101", "E501"]         # asserts are fine in tests; long comment lines are fine (format wraps code)
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = ["fastapi.Depends"]
+
+[tool.ruff.lint.per-file-ignores]
+"**/tests/**" = ["S"]
+# repo/ builds SQL only from constant fragments in the file; values always travel as bound parameters.
+"**/repo/*.py" = ["S608", "S105"]
+"conftest.py" = ["S"]
+"**/migrations/**" = ["E501"]
+
+# ---------------------------------------------------------------- mypy
+[tool.mypy]
+python_version = "3.12"
+strict = true
+plugins = ["pydantic.mypy"]
+explicit_package_bases = true
+mypy_path = "libs/common/src:services/identity/src:services/access/src:services/hierarchy/src:services/tasks/src:services/time/src"
+exclude = ["/migrations/", "/tests/"]
+
+# ---------------------------------------------------------------- pytest
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["libs/common/tests", "services", "tests"]
+addopts = "-ra --strict-markers --import-mode=importlib"
+markers = ["integration: needs a real PostgreSQL (PG_TEST_URL, or the bundled pgserver)"]
+
+# ---------------------------------------------------------------- import-linter
+# THE INDEPENDENCE RULES. `make imports` runs these; CI fails on a violation.
+[tool.importlinter]
+root_packages = [
+  "common",
+  "identity_service", "access_service", "hierarchy_service", "tasks_service", "time_service",
+]
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "Services never import each other (talk through generated API clients only)"
+type = "independence"
+modules = [
+  "identity_service", "access_service", "hierarchy_service", "tasks_service", "time_service",
+]
+
+[[tool.importlinter.contracts]]
+name = "libs/common never imports a service"
+type = "forbidden"
+source_modules = ["common"]
+forbidden_modules = [
+  "identity_service", "access_service", "hierarchy_service", "tasks_service", "time_service",
+]
+
+[[tool.importlinter.contracts]]
+name = "domain/ is pure: no web, no database, no other layer"
+type = "forbidden"
+source_modules = [
+  "identity_service.domain", "access_service.domain", "hierarchy_service.domain",
+  "tasks_service.domain", "time_service.domain",
+]
+forbidden_modules = [
+  "fastapi", "starlette", "sqlalchemy", "asyncpg", "httpx",
+  "identity_service.api", "access_service.api", "hierarchy_service.api", "tasks_service.api", "time_service.api",
+  "identity_service.repo", "access_service.repo", "hierarchy_service.repo", "tasks_service.repo", "time_service.repo",
+  "identity_service.usecases", "access_service.usecases", "hierarchy_service.usecases", "tasks_service.usecases", "time_service.usecases",
+]
+
+[[tool.importlinter.contracts]]
+name = "usecases/ (service layer) knows no web framework and no SQL"
+type = "forbidden"
+source_modules = [
+  "identity_service.usecases", "access_service.usecases", "hierarchy_service.usecases",
+  "tasks_service.usecases", "time_service.usecases",
+]
+forbidden_modules = [
+  "fastapi", "starlette", "sqlalchemy", "asyncpg",
+  "identity_service.api", "access_service.api", "hierarchy_service.api", "tasks_service.api", "time_service.api",
+]
+
+[[tool.importlinter.contracts]]
+name = "adapters wrap libraries behind ports (no web framework, never reach up into the api layer)"
+type = "forbidden"
+source_modules = ["identity_service.adapters"]
+forbidden_modules = ["fastapi", "starlette", "sqlalchemy", "identity_service.api"]
+
+[[tool.importlinter.contracts]]
+name = "repo/ is SQL only: never reaches up into api or usecases"
+type = "forbidden"
+source_modules = [
+  "identity_service.repo", "access_service.repo", "hierarchy_service.repo",
+  "tasks_service.repo", "time_service.repo",
+]
+forbidden_modules = [
+  "fastapi", "starlette",
+  "identity_service.api", "access_service.api", "hierarchy_service.api", "tasks_service.api", "time_service.api",
+  "identity_service.usecases", "access_service.usecases", "hierarchy_service.usecases", "tasks_service.usecases", "time_service.usecases",
+]

@@ -1,0 +1,97 @@
+# LOCAL development stack (and, with Caddy added, the sprint 1 single-server deploy).
+# Build context is the repo ROOT because every service image needs libs/common and the lockfile.
+#
+#   make up      start everything          http://localhost:8080  (Envoy, the front door)
+#   make logs    follow logs               http://localhost:8025  (Mailpit, caught emails)
+#
+# Each service gets ONLY its own database URL. There is no shared connection string.
+
+x-service: &service
+  restart: unless-stopped
+  depends_on:
+    postgres: { condition: service_healthy }
+  environment: &service-env
+    ENVIRONMENT: ${ENVIRONMENT:-local}
+    LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    JWKS_URL: ${JWKS_URL}
+    ACCESS_URL: ${ACCESS_URL}
+    HIERARCHY_URL: ${HIERARCHY_URL}
+    TASKS_URL: ${TASKS_URL}
+    TIME_URL: ${TIME_URL}
+    CORS_ORIGINS: ${CORS_ORIGINS:-}
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD}
+      DB_APP_PASSWORD: ${DB_APP_PASSWORD}
+      DB_MIGRATOR_PASSWORD: ${DB_MIGRATOR_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ../postgres/init.sh:/docker-entrypoint-initdb.d/10-init.sh:ro    # creates 5 databases + logins
+    ports: ["5432:5432"]                                                    # local only; closed in production
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      retries: 10
+
+  envoy:
+    image: envoyproxy/envoy:v1.31-latest
+    volumes: ["../envoy/envoy.yaml:/etc/envoy/envoy.yaml:ro"]
+    ports: ["8080:8080"]
+    depends_on: [identity, access, hierarchy, tasks, time]
+
+  mailpit:                       # catches outgoing email locally
+    image: axllent/mailpit
+    ports: ["8025:8025", "1025:1025"]
+
+  identity:
+    <<: *service
+    build: { context: ../.., dockerfile: services/identity/Dockerfile }
+    environment:
+      <<: *service-env
+      SERVICE_NAME: identity
+      SIGNING_PRIVATE_KEY: ${SIGNING_PRIVATE_KEY:-}
+      DATABASE_URL: postgresql+asyncpg://identity_app:${DB_APP_PASSWORD}@postgres:5432/identity
+      MIGRATION_DATABASE_URL: postgresql+psycopg://identity_migrator:${DB_MIGRATOR_PASSWORD}@postgres:5432/identity
+
+  access:
+    <<: *service
+    build: { context: ../.., dockerfile: services/access/Dockerfile }
+    environment:
+      <<: *service-env
+      SERVICE_NAME: access
+      DATABASE_URL: postgresql+asyncpg://access_app:${DB_APP_PASSWORD}@postgres:5432/access
+      MIGRATION_DATABASE_URL: postgresql+psycopg://access_migrator:${DB_MIGRATOR_PASSWORD}@postgres:5432/access
+
+  hierarchy:
+    <<: *service
+    build: { context: ../.., dockerfile: services/hierarchy/Dockerfile }
+    environment:
+      <<: *service-env
+      SERVICE_NAME: hierarchy
+      DATABASE_URL: postgresql+asyncpg://hierarchy_app:${DB_APP_PASSWORD}@postgres:5432/hierarchy
+      MIGRATION_DATABASE_URL: postgresql+psycopg://hierarchy_migrator:${DB_MIGRATOR_PASSWORD}@postgres:5432/hierarchy
+
+  tasks:
+    <<: *service
+    build: { context: ../.., dockerfile: services/tasks/Dockerfile }
+    environment:
+      <<: *service-env
+      SERVICE_NAME: tasks
+      DATABASE_URL: postgresql+asyncpg://tasks_app:${DB_APP_PASSWORD}@postgres:5432/tasks
+      MIGRATION_DATABASE_URL: postgresql+psycopg://tasks_migrator:${DB_MIGRATOR_PASSWORD}@postgres:5432/tasks
+
+  time:
+    <<: *service
+    build: { context: ../.., dockerfile: services/time/Dockerfile }
+    environment:
+      <<: *service-env
+      SERVICE_NAME: time
+      DATABASE_URL: postgresql+asyncpg://time_app:${DB_APP_PASSWORD}@postgres:5432/time
+      MIGRATION_DATABASE_URL: postgresql+psycopg://time_migrator:${DB_MIGRATOR_PASSWORD}@postgres:5432/time
+
+volumes:
+  pgdata:

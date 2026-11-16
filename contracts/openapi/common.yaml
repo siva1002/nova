@@ -1,0 +1,118 @@
+openapi: 3.1.0
+info:
+  title: Shared components
+  version: 1.0.0
+  description: Shared parameters, headers and schemas. Referenced by every service contract (plan/tech/06-api-conventions.md).
+paths: {}
+components:
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    Workspace:
+      name: workspace_id
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/Id' }
+    Limit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+    Cursor:
+      name: cursor
+      in: query
+      schema: { type: string }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      schema: { type: string, format: uuid }
+  schemas:
+    Id:
+      type: string
+      format: uuid
+      description: uuidv7, may be made by the client
+    Timestamp:
+      type: string
+      format: date-time
+    Money:
+      type: object
+      required: [amount, currency]
+      properties:
+        amount: { type: string, pattern: '^-?[0-9]+(\.[0-9]+)?$' }
+        currency: { type: string, minLength: 3, maxLength: 3 }
+    SetChange:
+      type: object
+      description: Change a set without overwriting other people's changes
+      properties:
+        add: { type: array, items: { $ref: '#/components/schemas/Id' }, maxItems: 500 }
+        remove: { type: array, items: { $ref: '#/components/schemas/Id' }, maxItems: 500 }
+    Allowed:
+      type: array
+      description: Actions the caller may take on this object (hide all others in the UI)
+      items: { type: string }
+    Meta:
+      type: object
+      required: [id, version, createdAt, updatedAt]
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        version: { type: integer, minimum: 1 }
+        createdAt: { $ref: '#/components/schemas/Timestamp' }
+        updatedAt: { $ref: '#/components/schemas/Timestamp' }
+        _allowed: { $ref: '#/components/schemas/Allowed' }
+    VersionOnly:
+      type: object
+      required: [version]
+      properties:
+        version: { type: integer, minimum: 1 }
+    Page:
+      type: object
+      required: [items, nextCursor]
+      properties:
+        items: { type: array, items: {} }
+        nextCursor: { type: [string, 'null'] }
+    Problem:
+      type: object
+      description: RFC 9457 problem details
+      required: [type, title, status, code]
+      properties:
+        type: { type: string, format: uri }
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
+        code: { type: string, description: stable machine code, e.g. status.required_fields_missing }
+        traceId: { type: string }
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              field: { type: string }
+              code: { type: string }
+    BulkResult:
+      type: object
+      properties:
+        results:
+          type: array
+          items:
+            type: object
+            required: [id, status]
+            properties:
+              id: { $ref: '#/components/schemas/Id' }
+              status: { type: integer }
+              problem: { $ref: '#/components/schemas/Problem' }
+  responses:
+    Problem:
+      description: Error
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    Conflict:
+      description: Version conflict; body has the current object
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    NoContent:
+      description: Done
