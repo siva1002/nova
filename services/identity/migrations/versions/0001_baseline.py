@@ -15,7 +15,6 @@ down_revision = None
 
 def upgrade() -> None:
     sql = (Path(__file__).resolve().parent.parent / "sql" / "0001_baseline.sql").read_text(encoding="utf-8")
-    # psycopg treats % as a parameter marker when params are passed; the SQL contains literal % (LIKE 'x%')
     op.get_bind().exec_driver_sql(sql.replace("%", "%%"))
 
 

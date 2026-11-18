@@ -10,6 +10,7 @@ dependencies = [
   "psycopg[binary]>=3.2",   # migrations only: runs the multi-statement baseline SQL
   "argon2-cffi>=23.1",
   "email-validator>=2.1",   # pydantic EmailStr on sign-up
+  "python-dotenv>=1.0",
 ]
 
 [tool.uv.sources]

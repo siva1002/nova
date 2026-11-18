@@ -1,6 +1,6 @@
 """Errors of the access domain. Each maps to one HTTP status and one stable machine `code`."""
 
-from common.errors import Conflict, Forbidden, Gone, NotFound, Unprocessable
+from common import Conflict, Forbidden, Gone, NotFound, Unprocessable
 
 
 class WorkspaceNotFound(NotFound):

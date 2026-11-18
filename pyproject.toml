@@ -9,7 +9,9 @@
 name = "work-platform"
 version = "0.0.0"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "sqlalchemy>=2.1.8",
+]
 
 [dependency-groups]
 # Dev tools, shared by every package. Nothing here ships in a service image.
