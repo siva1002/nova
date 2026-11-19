@@ -24,7 +24,7 @@ from __future__ import annotations
 import logging
 import re
 import time
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from uuid import UUID
@@ -127,7 +127,7 @@ def create_service_app(
         verifier = RemoteJwksVerifier(settings.jwks_url, settings.token_issuer)
 
     @asynccontextmanager
-    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         # One pooled HTTP client for all calls to other services. A client per call would open a new
         # TCP connection each time and exhaust sockets under load.
         app.state.http = httpx.AsyncClient(
@@ -257,7 +257,7 @@ class Tx:
 
 
 @asynccontextmanager
-async def transaction(request: Request, ctx: RequestContext) -> AsyncIterator[Tx]:
+async def transaction(request: Request, ctx: RequestContext) -> AsyncGenerator[Tx, None]:
     """One transaction scoped to ctx.workspace_id (forced RLS) on behalf of ctx.user_id."""
     factory = request.app.state.session_factory
     async with scoped_transaction(factory, workspace_id=ctx.workspace_id, user_id=ctx.user_id) as session:
@@ -269,7 +269,7 @@ async def transaction(request: Request, ctx: RequestContext) -> AsyncIterator[Tx
 @asynccontextmanager
 async def global_transaction(
     request: Request, *, user_id: UUID | None = None, workspace_id: UUID | None = None
-) -> AsyncIterator[Tx]:
+) -> AsyncGenerator[Tx, None]:
     """One transaction for routes that are not under /v1/w/{workspace_id}:
     identity (global tables), POST /v1/workspaces (the workspace id comes from the body),
     POST /v1/invites/accept (it comes from the token), GET /v1/me/workspaces (user-scoped)."""

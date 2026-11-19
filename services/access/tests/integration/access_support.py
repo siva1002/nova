@@ -7,7 +7,7 @@ network are needed. Everything else (routing, validation, transactions, row-leve
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any
@@ -87,7 +87,7 @@ class Running:
 
 
 @asynccontextmanager
-async def running(db: Any, tokens: Any, **setting_overrides: Any) -> AsyncIterator[Running]:
+async def running(db: Any, tokens: Any, **setting_overrides: Any) -> AsyncGenerator[Running, None]:
     values: dict[str, Any] = {"service_name": "access", "database_url": db.app_url, "log_level": "WARNING"}
     values.update(setting_overrides)
 

@@ -7,7 +7,7 @@ FastAPI app (same routing, middleware, validation, transactions and SQL as in pr
 from __future__ import annotations
 
 import base64
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any
@@ -69,7 +69,7 @@ class Running:
 
 
 @asynccontextmanager
-async def running(env: Env, **setting_overrides: Any) -> AsyncIterator[Running]:
+async def running(env: Env, **setting_overrides: Any) -> AsyncGenerator[Running, None]:
     """Start the app (lifespan included: this publishes the signing key) and give an HTTP client."""
     app = create_app(env.settings(**setting_overrides))
     async with app.router.lifespan_context(app):
